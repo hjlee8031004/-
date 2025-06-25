@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>공 튀기기 생존 게임</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Tone.js 사운드 라이브러리 로드 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+        /* 기본 폰트 및 배경 설정 */
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; /* 스크롤바 숨기기 */
+        }
+        /* 게임 캔버스에 커서가 올라가면 커서 모양 변경 */
+        canvas {
+            cursor: none;
+        }
+        /* 게임 오버 메시지 기본 숨김 처리 */
+        #gameOverMessage {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex items-center justify-center h-screen m-0 p-4">
+
+    <div class="flex flex-col md:flex-row items-center justify-center gap-8 w-full max-w-6xl">
+        <!-- 게임 캔버스 영역 -->
+        <div class="relative w-full max-w-2xl aspect-video">
+            <canvas id="gameCanvas" class="bg-gray-800 rounded-lg shadow-2xl w-full h-full"></canvas>
+            <!-- 게임 오버 메시지 -->
+            <div id="gameOverMessage" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-lg">
+                <h1 class="text-5xl md:text-6xl font-extrabold text-red-500 mb-4">게임 오버</h1>
+                <p class="text-lg md:text-xl text-gray-300">다시 시작하려면 클릭하세요</p>
+            </div>
+        </div>
+
+        <!-- 정보 패널 (생존 시간) -->
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl w-full max-w-xs text-center">
+            <h2 class="text-2xl font-bold text-cyan-400 mb-2">생존 시간</h2>
+            <p id="timer" class="text-5xl font-mono font-bold tracking-wider">0.0</p>
+            <p class="text-gray-400 mt-1">초</p>
+        </div>
+    </div>
+
+    <script>
+        // --- 요소 가져오기 ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const timerElement = document.getElementById('timer');
+        const gameOverMessage = document.getElementById('gameOverMessage');
+
+        // --- 캔버스 크기 설정 ---
+        let canvasWidth, canvasHeight;
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            canvasWidth = canvas.width;
+            canvasHeight = canvas.height;
+        }
+
+        // --- 사운드 설정 ---
+        // 페이지와 상호작용이 있어야 오디오 컨텍스트가 시작됩니다.
+        let synth;
+        function setupSound() {
+            if (!synth) {
+                // Tone.js Synth 생성
+                synth = new Tone.Synth({
+                    oscillator: { type: 'sine' },
+                    envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.1 }
+                }).toDestination();
+            }
+        }
+        
+        function playBounceSound() {
+            if (synth) {
+                // C5 음을 8분음표 길이로 재생
+                synth.triggerAttackRelease("C5", "8n", Tone.now());
+            }
+        }
+        
+        function playGameOverSound() {
+            if (synth) {
+                // G2 음을 4분음표 길이로 재생
+                synth.triggerAttackRelease("G2", "4n", Tone.now());
+            }
+        }
+
+        // --- 게임 객체 정의 ---
+        let ball, paddle;
+
+        function initializeGameObjects() {
+            ball = {
+                x: canvasWidth / 2,
+                y: canvasHeight / 2,
+                radius: Math.min(canvasWidth, canvasHeight) * 0.02, // 캔버스 크기에 비례
+                speed: 5,
+                dx: 4,
+                dy: -4
+            };
+
+            paddle = {
+                width: canvasWidth * 0.2, // 캔버스 너비의 20%
+                height: Math.min(canvasWidth, canvasHeight) * 0.025,
+                x: (canvasWidth - (canvasWidth * 0.2)) / 2,
+                y: canvasHeight - (Math.min(canvasWidth, canvasHeight) * 0.025) - 10
+            };
+        }
+        
+        // --- 게임 상태 변수 ---
+        let gameRunning = false;
+        let startTime;
+        let timerInterval;
+
+        // --- 그리기 함수 ---
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#34d399'; // 에메랄드 색
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawPaddle() {
+            ctx.beginPath();
+            ctx.rect(paddle.x, paddle.y, paddle.width, paddle.height);
+            ctx.fillStyle = '#60a5fa'; // 파란색
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        // --- 게임 로직 업데이트 ---
+        function update() {
+            // 공 위치 변경
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            // 벽 충돌 감지 (좌/우)
+            if (ball.x + ball.radius > canvasWidth || ball.x - ball.radius < 0) {
+                ball.dx = -ball.dx;
+                playBounceSound();
+            }
+
+            // 벽 충돌 감지 (상)
+            if (ball.y - ball.radius < 0) {
+                ball.dy = -ball.dy;
+                playBounceSound();
+            }
+
+            // 바닥 충돌 감지 (게임 오버)
+            if (ball.y + ball.radius > canvasHeight) {
+                gameOver();
+            }
+
+            // 발판 충돌 감지
+            if (ball.y + ball.radius > paddle.y && 
+                ball.x > paddle.x && 
+                ball.x < paddle.x + paddle.width) {
+                
+                // 공이 발판 위에서만 튕기도록 y위치 조정
+                ball.y = paddle.y - ball.radius;
+                ball.dy = -ball.dy;
+                playBounceSound();
+            }
+        }
+        
+        // --- 메인 드로우 루프 ---
+        function draw() {
+            // 캔버스 초기화
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+            
+            drawBall();
+            drawPaddle();
+        }
+        
+        // --- 게임 루프 ---
+        function gameLoop() {
+            if (!gameRunning) return;
+            
+            update();
+            draw();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // --- 타이머 함수 ---
+        function updateTimer() {
+            const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
+            timerElement.textContent = elapsedTime;
+        }
+
+        // --- 게임 시작/종료/재시작 ---
+        function startGame() {
+            if (gameRunning) return;
+            gameRunning = true;
+            gameOverMessage.style.display = 'none';
+            resizeCanvas();
+            initializeGameObjects();
+            
+            startTime = Date.now();
+            timerInterval = setInterval(updateTimer, 100);
+            
+            gameLoop();
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            clearInterval(timerInterval);
+            gameOverMessage.style.display = 'flex';
+            playGameOverSound();
+        }
+        
+        function restartGame() {
+            // 사운드 설정이 안되어있으면 먼저 설정
+            setupSound();
+            startGame();
+        }
+
+        // --- 이벤트 리스너 ---
+        function mouseMoveHandler(e) {
+            const relativeX = e.clientX - canvas.getBoundingClientRect().left;
+            if (relativeX > 0 && relativeX < canvasWidth) {
+                paddle.x = relativeX - paddle.width / 2;
+
+                // 발판이 캔버스 밖으로 나가지 않도록 제한
+                if (paddle.x < 0) {
+                    paddle.x = 0;
+                }
+                if (paddle.x + paddle.width > canvasWidth) {
+                    paddle.x = canvasWidth - paddle.width;
+                }
+            }
+        }
+        
+        document.addEventListener('mousemove', mouseMoveHandler);
+        // 클릭하면 게임 재시작
+        document.body.addEventListener('click', () => {
+            // 게임이 실행중이 아닐 때만 재시작
+            if (!gameRunning) {
+                restartGame();
+            } else if (!synth) {
+                // 게임이 실행중이지만 소리가 설정 안 된 경우 (최초 클릭)
+                setupSound();
+            }
+        });
+        // 창 크기 변경 시 캔버스 크기 재조정 및 게임 재시작
+        window.addEventListener('resize', () => {
+            gameOver(); // 진행 중인 게임을 종료
+            resizeCanvas(); // 캔버스 크기 재조정
+            initializeGameObjects(); // 객체 위치 초기화
+            draw(); // 초기화된 상태를 그림
+        });
+
+        // --- 초기 실행 ---
+        // 페이지 로드 시 초기 상태를 설정하고 그림
+        resizeCanvas();
+        initializeGameObjects();
+        draw();
+        
+        // 초기 안내 메시지 표시
+        gameOverMessage.innerHTML = `
+            <h1 class="text-5xl md:text-6xl font-extrabold text-cyan-400 mb-4">공 튀기기</h1>
+            <p class="text-lg md:text-xl text-gray-300">시작하려면 화면을 클릭하세요</p>
+        `;
+        gameOverMessage.style.display = 'flex';
+
+    </script>
+</body>
+</html>
